@@ -5,8 +5,8 @@
  * @param ast The parsed AST object.
  */
 export function formatAST(ast: any): string {
-  // For the root Document node, format its children without extra indentation.
-  return formatNode(ast, 0);
+	// For the root Document node, format its children without extra indentation.
+	return formatNode(ast, 0);
 }
 
 /**
@@ -15,45 +15,47 @@ export function formatAST(ast: any): string {
  * @param indentLevel Current indentation level (root is 0).
  */
 function formatNode(node: any, indentLevel: number): string {
-  const indent = indentLevel > 0 ? '  '.repeat(indentLevel) : '';
-  const nodeType = node.constructor.name;
+	const indent = indentLevel > 0 ? "  ".repeat(indentLevel) : "";
+	const nodeType = node.constructor.name;
 
-  switch (nodeType) {
-    case 'Document':
-      return node.children.map((child: any) => formatNode(child, 0)).join('');
-      
-    case 'Text':
-      return escapeSpecialChars(node.text);
-      
-    case 'Math':
-    case 'MathNode':
-      if (node.inline) {
-        return `$${node.content}$`;
-      } else {
-        return `$$\n${node.content}\n$$`;
-      }
-      
-    case 'Command':
-      let cmdStr = `\\${node.name}`;
-      if (node.optionalArgument) {
-        cmdStr += `[${node.optionalArgument}]`;
-      }
-      if (node.argument) {
-        cmdStr += `{${node.argument}}`;
-      }
-      return cmdStr;
-      
-    case 'Environment':
-      let envStr = `${indent}\\begin{${node.name}}\n`;
-      envStr += node.children
-        .map((child: any) => formatNode(child, indentLevel + 1))
-        .join('');
-      envStr += `\n${indent}\\end{${node.name}}`;
-      return envStr;
-      
-    default:
-      return '';
-  }
+	switch (nodeType) {
+		case "Document":
+			return node.children.map((child: any) => formatNode(child, 0)).join("");
+
+		case "Text":
+			return escapeSpecialChars(node.text);
+
+		case "Math":
+		case "MathNode":
+			if (node.inline) {
+				return `$${node.content}$`;
+			} else {
+				return `$$\n${node.content}\n$$`;
+			}
+
+		// In latexFormatter.ts, update the Command case:
+		case "Command":
+			let cmdStr = `\\${node.name}`;
+			if (node.optionalArgument) {
+				cmdStr += `[${node.optionalArgument}]`;
+			}
+			if (node.requiredArguments && node.requiredArguments.length > 0) {
+				for (const arg of node.requiredArguments) {
+					// arg 是一个 Document 节点，递归格式化其内容
+					cmdStr += `{${formatAST(arg)}}`;
+				}
+			}
+			return cmdStr;
+
+		case "Environment":
+			let envStr = `${indent}\\begin{${node.name}}\n`;
+			envStr += node.children.map((child: any) => formatNode(child, indentLevel + 1)).join("");
+			envStr += `\n${indent}\\end{${node.name}}`;
+			return envStr;
+
+		default:
+			return "";
+	}
 }
 
 /**
@@ -64,21 +66,24 @@ function formatNode(node: any, indentLevel: number): string {
  * @param text The input text.
  */
 function escapeSpecialChars(text: string): string {
-  return text.split('\n').map(line => {
-    // 判断去除前导空白后是否以 "%" 开头，若是，则认为整行为注释，保持原样返回。
-    if (line.trimStart().startsWith('%')) {
-      return line;
-    }
-    // 查找行中第一个未转义的 "%"，视为注释起始位置。
-    const idx = findFirstUnescapedPercent(line);
-    if (idx !== -1) {
-      const before = line.slice(0, idx);
-      const comment = line.slice(idx); // 包含 "%" 及后续内容
-      return escapeNonComment(before) + comment;
-    } else {
-      return escapeNonComment(line);
-    }
-  }).join('\n');
+	return text
+		.split("\n")
+		.map((line) => {
+			// 判断去除前导空白后是否以 "%" 开头，若是，则认为整行为注释，保持原样返回。
+			if (line.trimStart().startsWith("%")) {
+				return line;
+			}
+			// 查找行中第一个未转义的 "%"，视为注释起始位置。
+			const idx = findFirstUnescapedPercent(line);
+			if (idx !== -1) {
+				const before = line.slice(0, idx);
+				const comment = line.slice(idx); // 包含 "%" 及后续内容
+				return escapeNonComment(before) + comment;
+			} else {
+				return escapeNonComment(line);
+			}
+		})
+		.join("\n");
 }
 
 /**
@@ -86,14 +91,14 @@ function escapeSpecialChars(text: string): string {
  * @param line 输入行
  */
 function findFirstUnescapedPercent(line: string): number {
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] === '%') {
-      if (i === 0 || line[i - 1] !== '\\') {
-        return i;
-      }
-    }
-  }
-  return -1;
+	for (let i = 0; i < line.length; i++) {
+		if (line[i] === "%") {
+			if (i === 0 || line[i - 1] !== "\\") {
+				return i;
+			}
+		}
+	}
+	return -1;
 }
 
 /**
@@ -101,9 +106,9 @@ function findFirstUnescapedPercent(line: string): number {
  * @param text 输入文本
  */
 function escapeNonComment(text: string): string {
-  // 转义除 "%" 外的特殊字符： # $ & ~ _ ^ { }
-  let escaped = text.replace(/([#$&~_^{}])/g, '\\$1');
-  // 如果该部分中本不该出现 "%"（例如原本由 "\%" 解析为 "%"），则这里全部转义
-  escaped = escaped.replace(/%/g, '\\%');
-  return escaped;
+	// 转义除 "%" 外的特殊字符： # $ & ~ _ ^ { }
+	let escaped = text.replace(/([#$&~_^{}])/g, "\\$1");
+	// 如果该部分中本不该出现 "%"（例如原本由 "\%" 解析为 "%"），则这里全部转义
+	escaped = escaped.replace(/%/g, "\\%");
+	return escaped;
 }
