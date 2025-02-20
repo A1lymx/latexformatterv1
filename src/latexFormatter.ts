@@ -57,10 +57,32 @@ function formatNode(node: any, indentLevel: number): string {
 			return cmdStr;
 
 		case "Environment":
-			let envStr = `${indent}\\begin{${node.name}}\n`;
-			envStr += node.children.map((child: any) => formatNode(child, indentLevel + 1)).join("");
-			envStr += `\n${indent}\\end{${node.name}}`;
-			return envStr;
+			const mathEnvs = [
+				"equation",
+				"equation*",
+				"align",
+				"align*",
+				"gather",
+				"gather*",
+				"multline",
+				"multline*",
+				"split",
+				"array",
+			];
+
+			if (mathEnvs.includes(node.name)) {
+				// 数学环境特殊处理：不添加额外空行和缩进
+				let envStr = `\\begin{${node.name}}`;
+				envStr += node.children.map((child: any) => formatNode(child, 0)).join("");
+				envStr += `\\end{${node.name}}`;
+				return envStr;
+			} else {
+				// 非数学环境保持原有格式
+				let envStr = `${indent}\\begin{${node.name}}\n`;
+				envStr += node.children.map((child: any) => formatNode(child, indentLevel + 1)).join("");
+				envStr += `\n${indent}\\end{${node.name}}`;
+				return envStr;
+			}
 
 		default:
 			return "";

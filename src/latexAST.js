@@ -339,6 +339,8 @@ class Parser {
 			throw new Error("Expected { after \\begin");
 		}
 		this.eat(TOKEN_LBRACE);
+
+		// Parse environment name
 		let envName = "";
 		while (this.currentToken.type !== TOKEN_RBRACE) {
 			console.log(`[DEBUG][Parser] Parsing environment name, current token: ${this.currentToken.toString()}`);
@@ -347,50 +349,105 @@ class Parser {
 		}
 		this.eat(TOKEN_RBRACE);
 
-		// Parse the environment's internal content
+		// For math environments (equation, align, etc.), collect content as raw text
+		const mathEnvs = [
+			"equation",
+			"equation*",
+			"align",
+			"align*",
+			"gather",
+			"gather*",
+			"multline",
+			"multline*",
+			"split",
+			"array",
+		];
+		if (mathEnvs.includes(envName)) {
+			let mathContent = "";
+			let bracketDepth = 0;
+
+			while (true) {
+				if (
+					this.currentToken.type === TOKEN_COMMAND &&
+					this.currentToken.value === "end" &&
+					bracketDepth === 0
+				) {
+					break;
+				}
+
+				// Keep track of nested braces
+				if (this.currentToken.type === TOKEN_LBRACE) {
+					bracketDepth++;
+				} else if (this.currentToken.type === TOKEN_RBRACE) {
+					bracketDepth--;
+				}
+
+				// Preserve the original token exactly as it appears
+				if (this.currentToken.type === TOKEN_COMMAND) {
+					mathContent += "\\" + this.currentToken.value;
+				} else if (this.currentToken.type === TOKEN_TEXT) {
+					mathContent += this.currentToken.value;
+				} else if (this.currentToken.type === TOKEN_LBRACE) {
+					mathContent += "{";
+				} else if (this.currentToken.type === TOKEN_RBRACE) {
+					mathContent += "}";
+				} else if (this.currentToken.type === TOKEN_LBRACKET) {
+					mathContent += "[";
+				} else if (this.currentToken.type === TOKEN_RBRACKET) {
+					mathContent += "]";
+				}
+
+				this.eat(this.currentToken.type);
+			}
+
+			// Create a single Text node with the math content
+			const children = [new Text(mathContent, true)];
+
+			// Process \end{envName}
+			this.eat(TOKEN_COMMAND); // Consume 'end'
+			this.eat(TOKEN_LBRACE);
+			let endEnvName = "";
+			while (this.currentToken.type !== TOKEN_RBRACE) {
+				endEnvName += this.currentToken.value;
+				this.eat(this.currentToken.type);
+			}
+			this.eat(TOKEN_RBRACE);
+
+			if (envName.trim() !== endEnvName.trim()) {
+				throw new Error("Environment name mismatch between \\begin and \\end");
+			}
+
+			return new Environment(envName, children);
+		}
+
+		// For non-math environments, use the original parsing logic
 		const children = [];
-		let iteration = 0;
 		while (true) {
-			iteration++;
-			console.log(
-				`[DEBUG][Parser] Environment content loop iteration ${iteration}, current token: ${this.currentToken.toString()}`
-			);
-			// Encountering \end indicates the end of the environment
 			if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
 				break;
 			}
 			const node = this.parseElement();
 			if (node !== null) {
 				children.push(node);
-			} else {
-				if (this.currentToken.type !== TOKEN_EOF) {
-					console.log(
-						`[DEBUG][Parser] In environment, parseElement returned null, force consuming token: ${this.currentToken.toString()}`
-					);
-					this.eat(this.currentToken.type);
-				}
+			} else if (this.currentToken.type !== TOKEN_EOF) {
+				this.eat(this.currentToken.type);
 			}
 		}
 
 		// Process \end{envName}
-		console.log(`[DEBUG][Parser] Starting to parse \\end for environment`);
 		this.eat(TOKEN_COMMAND); // Consume 'end'
-		if (this.currentToken.type !== TOKEN_LBRACE) {
-			throw new Error("Expected { after \\end");
-		}
 		this.eat(TOKEN_LBRACE);
 		let endEnvName = "";
 		while (this.currentToken.type !== TOKEN_RBRACE) {
-			console.log(
-				`[DEBUG][Parser] Parsing \\end environment name, current token: ${this.currentToken.toString()}`
-			);
 			endEnvName += this.currentToken.value;
 			this.eat(this.currentToken.type);
 		}
 		this.eat(TOKEN_RBRACE);
+
 		if (envName.trim() !== endEnvName.trim()) {
 			throw new Error("Environment name mismatch between \\begin and \\end");
 		}
+
 		return new Environment(envName, children);
 	}
 }
