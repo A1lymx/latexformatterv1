@@ -7,11 +7,20 @@
     "vscode": "^1.97.0"
   },
   "categories": [
-    "Other"
+    "Formatters"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:latex"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "latex",
+        "aliases": ["LaTeX", "latex"],
+        "extensions": [".tex","latex",".sty",".cls"]
+      }
+    ],
     "commands": [
       {
         "command": "latexformatterv1.helloWorld",

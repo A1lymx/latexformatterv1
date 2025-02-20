@@ -3,26 +3,29 @@
 import * as vscode from 'vscode';
 //import { parseLatex } from './latexAST';
 const { parseLatex } = require('./latexAST');
-
+import { formatAST } from './latexFormatter';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
+
 export function activate(context: vscode.ExtensionContext) {
-
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "latexformatterv1" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('latexformatterv1.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from latexFormatterv1!');
-	});
-
-	context.subscriptions.push(disposable);
-}
+	context.subscriptions.push(
+	  vscode.languages.registerDocumentFormattingEditProvider('latex', {
+		provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
+		  const text = document.getText();
+		  // 使用解析器解析 LaTeX 文本，生成 AST
+		  const ast = parseLatex(text);
+		  // 基于 AST 生成格式化后的 LaTeX 文本
+		  const formattedText = formatAST(ast);
+		  // 构造替换整个文档内容的编辑操作
+		  const fullRange = new vscode.Range(
+			document.positionAt(0),
+			document.positionAt(text.length)
+		  );
+		  return [vscode.TextEdit.replace(fullRange, formattedText)];
+		}
+	  })
+	);
+  }
 
 // This method is called when your extension is deactivated
 export function deactivate() {}
