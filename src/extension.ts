@@ -12,11 +12,11 @@ export function activate(context: vscode.ExtensionContext) {
 	  vscode.languages.registerDocumentFormattingEditProvider('latex', {
 		provideDocumentFormattingEdits(document: vscode.TextDocument): vscode.TextEdit[] {
 		  const text = document.getText();
-		  // 使用解析器解析 LaTeX 文本，生成 AST
+		  // Parse the LaTeX text using the parser to generate an AST
 		  const ast = parseLatex(text);
-		  // 基于 AST 生成格式化后的 LaTeX 文本
+		  // Generate formatted LaTeX text based on the AST
 		  const formattedText = formatAST(ast);
-		  // 构造替换整个文档内容的编辑操作
+		  // Construct an edit operation to replace the entire document content
 		  const fullRange = new vscode.Range(
 			document.positionAt(0),
 			document.positionAt(text.length)

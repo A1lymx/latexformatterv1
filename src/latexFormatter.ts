@@ -24,7 +24,7 @@ function formatNode(node: any, indentLevel: number): string {
 
 		case "Text":
 			if (node.escaped) {
-				// 已经是转义过的文本，直接返回
+				// The text is already escaped, return it directly
 				return node.text;
 			} else {
 				return escapeSpecialChars(node.text);
@@ -46,7 +46,7 @@ function formatNode(node: any, indentLevel: number): string {
 			}
 			if (node.requiredArguments && node.requiredArguments.length > 0) {
 				for (const arg of node.requiredArguments) {
-					// 如果是 input 或 include 命令，使用原始格式化
+					// If it is an input or include command, use raw formatting
 					if (node.name === "input" || node.name === "include") {
 						cmdStr += `{${formatRawNode(arg)}}`;
 					} else {
@@ -71,13 +71,12 @@ function formatNode(node: any, indentLevel: number): string {
 			];
 
 			if (mathEnvs.includes(node.name)) {
-				// 数学环境特殊处理：不添加额外空行和缩进
+				// Special handling for math environments: do not add extra newlines and indentation
 				let envStr = `\\begin{${node.name}}`;
 				envStr += node.children.map((child: any) => formatNode(child, 0)).join("");
 				envStr += `\\end{${node.name}}`;
 				return envStr;
 			} else {
-				// 非数学环境保持原有格式
 				let envStr = `${indent}\\begin{${node.name}}\n`;
 				envStr += node.children.map((child: any) => formatNode(child, indentLevel + 1)).join("");
 				envStr += `\n${indent}\\end{${node.name}}`;
@@ -95,7 +94,7 @@ function formatRawNode(node: any): string {
 		case "Document":
 			return node.children.map((child: any) => formatRawNode(child)).join("");
 		case "Text":
-			// 直接返回原始文本，不进行转义
+			// Directly return the raw text without escaping
 			return node.text;
 		case "Math":
 		case "MathNode":
@@ -107,7 +106,7 @@ function formatRawNode(node: any): string {
 		case "Command":
 			let cmdStr = `\\${node.name}`;
 			if (node.optionalArgument) {
-				// 对可选参数依然按常规格式化（通常可选参数不包含文件名）
+				// Format optional arguments as usual (usually optional arguments do not contain filenames)
 				cmdStr += `[${formatAST(node.optionalArgument)}]`;
 			}
 			if (node.requiredArguments && node.requiredArguments.length > 0) {

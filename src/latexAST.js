@@ -94,7 +94,7 @@ class Lexer {
 				const escapedChar = this.text[this.pos];
 				this.pos++; // Consume the escaped character
 				const token = new Token(TOKEN_TEXT, "\\" + escapedChar);
-				token.escaped = true; // 标记该 token 来自转义
+				token.escaped = true; // Mark this token as escaped
 				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()} (escaped)`);
 				return token;
 			}
