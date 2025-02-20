@@ -23,7 +23,12 @@ function formatNode(node: any, indentLevel: number): string {
 			return node.children.map((child: any) => formatNode(child, 0)).join("");
 
 		case "Text":
-			return escapeSpecialChars(node.text);
+			if (node.escaped) {
+				// 已经是转义过的文本，直接返回
+				return node.text;
+			} else {
+				return escapeSpecialChars(node.text);
+			}
 
 		case "Math":
 		case "MathNode":
@@ -106,9 +111,9 @@ function findFirstUnescapedPercent(line: string): number {
  * @param text 输入文本
  */
 function escapeNonComment(text: string): string {
-	// 转义除 "%" 外的特殊字符： # $ & ~ _ ^ { }
-	let escaped = text.replace(/([#$&~_^{}])/g, "\\$1");
-	// 如果该部分中本不该出现 "%"（例如原本由 "\%" 解析为 "%"），则这里全部转义
+	// 转义除 "%" 和 "~" 外的特殊字符： # $ & _ ^ { }
+	let escaped = text.replace(/([#$&_^{}])/g, "\\$1");
+	// 对 "%" 进行单独转义
 	escaped = escaped.replace(/%/g, "\\%");
 	return escaped;
 }

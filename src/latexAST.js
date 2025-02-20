@@ -8,7 +8,7 @@ const TOKEN_RBRACKET = "RBRACKET";
 const TOKEN_EOF = "EOF";
 const TOKEN_MATH_INLINE = "MATH_INLINE";
 const TOKEN_MATH_DISPLAY = "MATH_DISPLAY";
-const TOKEN_ESCAPED_TEXT = 'ESCAPED_TEXT';
+const TOKEN_ESCAPED_TEXT = "ESCAPED_TEXT";
 
 // --- Token Class ---
 class Token {
@@ -77,8 +77,7 @@ class Lexer {
 
 		// Process commands or escape sequences starting with '\'
 		if (current === "\\") {
-			// Look ahead: if next character is a letter, treat as command;
-			// otherwise, treat as an escape sequence returning the literal character.
+			// Look ahead: if next character is a letter, treat as command.
 			if (this.pos + 1 < this.text.length && /[a-zA-Z]/.test(this.text[this.pos + 1])) {
 				this.pos++; // Consume the backslash
 				const start = this.pos;
@@ -91,12 +90,13 @@ class Lexer {
 				return token;
 			} else {
 				// Escape sequence: consume '\' and the next character,
-				// return it as a TEXT token.
-				this.pos++; // Consume the backslash
+				// return a TEXT token that preserves the backslash.
+				this.pos++; // Consume '\'
 				const escapedChar = this.text[this.pos];
 				this.pos++; // Consume the escaped character
-				const token = new Token(TOKEN_TEXT, escapedChar);
-				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
+				const token = new Token(TOKEN_TEXT, "\\" + escapedChar);
+				token.escaped = true; // 标记该 token 来自转义
+				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()} (escaped)`);
 				return token;
 			}
 		}
@@ -156,8 +156,9 @@ class Document {
 }
 
 class Text {
-	constructor(text) {
+	constructor(text, escaped = false) {
 		this.text = text;
+		this.escaped = escaped;
 	}
 	toString() {
 		return `Text(${JSON.stringify(this.text)})`;
@@ -252,7 +253,7 @@ class Parser {
 
 		if (token.type === TOKEN_TEXT) {
 			this.eat(TOKEN_TEXT);
-			return new Text(token.value);
+			return new Text(token.value, token.escaped || false);
 		}
 
 		// Process math formulas (inline or display)
