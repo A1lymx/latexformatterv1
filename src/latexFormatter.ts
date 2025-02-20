@@ -1,66 +1,109 @@
-// latexFormatter.ts
+// src/latexFormatter.ts
 
 /**
- * 格式化整个 AST，返回格式化后的 LaTeX 文本
- * @param ast 解析后的 AST 对象
+ * Format the entire AST and return the formatted LaTeX text.
+ * @param ast The parsed AST object.
  */
 export function formatAST(ast: any): string {
-    // 对于根节点 Document，不添加额外缩进
-    return formatNode(ast, 0);
+  // For the root Document node, format its children without extra indentation.
+  return formatNode(ast, 0);
+}
+
+/**
+ * Recursively format AST nodes.
+ * @param node The current node.
+ * @param indentLevel Current indentation level (root is 0).
+ */
+function formatNode(node: any, indentLevel: number): string {
+  const indent = indentLevel > 0 ? '  '.repeat(indentLevel) : '';
+  const nodeType = node.constructor.name;
+
+  switch (nodeType) {
+    case 'Document':
+      return node.children.map((child: any) => formatNode(child, 0)).join('');
+      
+    case 'Text':
+      return escapeSpecialChars(node.text);
+      
+    case 'Math':
+    case 'MathNode':
+      if (node.inline) {
+        return `$${node.content}$`;
+      } else {
+        return `$$\n${node.content}\n$$`;
+      }
+      
+    case 'Command':
+      let cmdStr = `\\${node.name}`;
+      if (node.optionalArgument) {
+        cmdStr += `[${node.optionalArgument}]`;
+      }
+      if (node.argument) {
+        cmdStr += `{${node.argument}}`;
+      }
+      return cmdStr;
+      
+    case 'Environment':
+      let envStr = `${indent}\\begin{${node.name}}\n`;
+      envStr += node.children
+        .map((child: any) => formatNode(child, indentLevel + 1))
+        .join('');
+      envStr += `\n${indent}\\end{${node.name}}`;
+      return envStr;
+      
+    default:
+      return '';
   }
-  
-  /**
-   * 递归格式化 AST 节点
-   * @param node 当前节点
-   * @param indentLevel 当前缩进层级（根节点为 0）
-   */
-  function formatNode(node: any, indentLevel: number): string {
-    // 当 indentLevel 为 0 时，不额外添加缩进；否则每级使用两个空格缩进
-    const indent = indentLevel > 0 ? '  '.repeat(indentLevel) : '';
-    // 通过节点的构造函数名称区分类型
-    const nodeType = node.constructor.name;
-  
-    switch (nodeType) {
-      case 'Document':
-        // Document 节点包含子节点，直接依次格式化子节点（顶级节点不加缩进）
-        return node.children.map((child: any) => formatNode(child, 0)).join('');
-        
-      case 'Text':
-        // 文本节点直接返回文本内容
-        return node.text;
-        
-      case 'Math':
-      case 'MathNode':
-        // 数学节点根据 inline 标识判断是否为行内或显示数学公式
-        if (node.inline) {
-          return `$${node.content}$`;
-        } else {
-          return `$$\n${node.content}\n$$`;
-        }
-        
-      case 'Command':
-        // 命令节点输出形如 \name[optional]{argument}
-        let cmdStr = `\\${node.name}`;
-        if (node.optionalArgument) {
-          cmdStr += `[${node.optionalArgument}]`;
-        }
-        if (node.argument) {
-          cmdStr += `{${node.argument}}`;
-        }
-        return cmdStr;
-        
-      case 'Environment':
-        // 环境节点：\begin{envName} 和 \end{envName} 分行，并对内部内容增加缩进
-        let envStr = `${indent}\\begin{${node.name}}\n`;
-        // 对环境内部子节点，缩进级别 +1
-        envStr += node.children
-          .map((child: any) => formatNode(child, indentLevel + 1))
-          .join('');
-        envStr += `\n${indent}\\end{${node.name}}`;
-        return envStr;
-        
-      default:
-        return '';
+}
+
+/**
+ * Escape special LaTeX characters in a text string while preserving comments.
+ * For each line, if a comment marker "%" appears unescaped,
+ * only the text before it is processed for special character escaping.
+ * Lines that start with "%" (after trimming) are left unchanged.
+ * @param text The input text.
+ */
+function escapeSpecialChars(text: string): string {
+  return text.split('\n').map(line => {
+    // 判断去除前导空白后是否以 "%" 开头，若是，则认为整行为注释，保持原样返回。
+    if (line.trimStart().startsWith('%')) {
+      return line;
+    }
+    // 查找行中第一个未转义的 "%"，视为注释起始位置。
+    const idx = findFirstUnescapedPercent(line);
+    if (idx !== -1) {
+      const before = line.slice(0, idx);
+      const comment = line.slice(idx); // 包含 "%" 及后续内容
+      return escapeNonComment(before) + comment;
+    } else {
+      return escapeNonComment(line);
+    }
+  }).join('\n');
+}
+
+/**
+ * Helper: 查找一行中第一个未被反斜杠转义的 "%" 的位置
+ * @param line 输入行
+ */
+function findFirstUnescapedPercent(line: string): number {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '%') {
+      if (i === 0 || line[i - 1] !== '\\') {
+        return i;
+      }
     }
   }
-  
+  return -1;
+}
+
+/**
+ * Helper: 对非注释部分的文本转义特殊字符，不处理 "%"（因为已在上层处理）。
+ * @param text 输入文本
+ */
+function escapeNonComment(text: string): string {
+  // 转义除 "%" 外的特殊字符： # $ & ~ _ ^ { }
+  let escaped = text.replace(/([#$&~_^{}])/g, '\\$1');
+  // 如果该部分中本不该出现 "%"（例如原本由 "\%" 解析为 "%"），则这里全部转义
+  escaped = escaped.replace(/%/g, '\\%');
+  return escaped;
+}
