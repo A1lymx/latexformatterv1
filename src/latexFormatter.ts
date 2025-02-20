@@ -46,7 +46,12 @@ function formatNode(node: any, indentLevel: number): string {
 			}
 			if (node.requiredArguments && node.requiredArguments.length > 0) {
 				for (const arg of node.requiredArguments) {
-					cmdStr += `{${formatAST(arg)}}`;
+					// 如果是 input 或 include 命令，使用原始格式化
+					if (node.name === "input" || node.name === "include") {
+						cmdStr += `{${formatRawNode(arg)}}`;
+					} else {
+						cmdStr += `{${formatAST(arg)}}`;
+					}
 				}
 			}
 			return cmdStr;
@@ -57,6 +62,44 @@ function formatNode(node: any, indentLevel: number): string {
 			envStr += `\n${indent}\\end{${node.name}}`;
 			return envStr;
 
+		default:
+			return "";
+	}
+}
+
+function formatRawNode(node: any): string {
+	const nodeType = node.constructor.name;
+	switch (nodeType) {
+		case "Document":
+			return node.children.map((child: any) => formatRawNode(child)).join("");
+		case "Text":
+			// 直接返回原始文本，不进行转义
+			return node.text;
+		case "Math":
+		case "MathNode":
+			if (node.inline) {
+				return `$${node.content}$`;
+			} else {
+				return `$$\n${node.content}\n$$`;
+			}
+		case "Command":
+			let cmdStr = `\\${node.name}`;
+			if (node.optionalArgument) {
+				// 对可选参数依然按常规格式化（通常可选参数不包含文件名）
+				cmdStr += `[${formatAST(node.optionalArgument)}]`;
+			}
+			if (node.requiredArguments && node.requiredArguments.length > 0) {
+				for (const arg of node.requiredArguments) {
+					cmdStr += `{${formatRawNode(arg)}}`;
+				}
+			}
+			return cmdStr;
+		case "Environment":
+			let envStr =
+				`\\begin{${node.name}}\n` +
+				node.children.map((child: any) => formatRawNode(child)).join("") +
+				`\n\\end{${node.name}}`;
+			return envStr;
 		default:
 			return "";
 	}
