@@ -8,7 +8,6 @@ const TOKEN_RBRACKET = "RBRACKET";
 const TOKEN_EOF = "EOF";
 const TOKEN_MATH_INLINE = "MATH_INLINE";
 const TOKEN_MATH_DISPLAY = "MATH_DISPLAY";
-const TOKEN_ESCAPED_TEXT = "ESCAPED_TEXT";
 
 // --- Token Class ---
 class Token {
@@ -169,13 +168,13 @@ class Text {
 class Command {
 	constructor(name, optionalArgument = null, requiredArguments = []) {
 		this.name = name;
-		this.optionalArgument = optionalArgument;
-		this.requiredArguments = requiredArguments; // 每个必选参数为一个 Document 节点
+		this.optionalArgument = optionalArgument; // Now a Document node
+		this.requiredArguments = requiredArguments; // Array of Document nodes
 	}
 	toString() {
 		let argsStr = "";
 		if (this.optionalArgument) {
-			argsStr += `[${this.optionalArgument}]`;
+			argsStr += `[${this.optionalArgument.toString()}]`;
 		}
 		for (const arg of this.requiredArguments) {
 			argsStr += `{${arg.toString()}}`;
@@ -284,6 +283,7 @@ class Parser {
 
 	// Modified parseCommand to support multiple required arguments
 	// Modified parseCommand to support multiple required arguments and preserve inner commands
+	// Modified parseCommand to support multiple required arguments and a recursive optional argument
 	parseCommand() {
 		const token = this.currentToken;
 		console.log(`[DEBUG][Parser] Parsing command: ${token}`);
@@ -291,37 +291,40 @@ class Parser {
 		let optionalArgument = null;
 		let requiredArguments = [];
 
-		// Check for an optional argument in square brackets (treated as plain text)
+		// Parse optional argument recursively if present
 		if (this.currentToken.type === TOKEN_LBRACKET) {
 			this.eat(TOKEN_LBRACKET);
-			let optContent = "";
+			let optNodes = [];
+			// Parse until the closing bracket is encountered
 			while (this.currentToken.type !== TOKEN_RBRACKET) {
-				console.log(`[DEBUG][Parser] In optional argument, current token: ${this.currentToken}`);
-				optContent += this.currentToken.value;
-				this.eat(this.currentToken.type);
+				let node = this.parseElement();
+				if (node) {
+					optNodes.push(node);
+				} else {
+					if (this.currentToken.type !== TOKEN_RBRACKET) {
+						this.eat(this.currentToken.type);
+					}
+				}
 			}
 			this.eat(TOKEN_RBRACKET);
-			optionalArgument = optContent;
+			optionalArgument = new Document(optNodes); // Wrap in a Document node
 		}
 
 		// Parse one or more required arguments in braces recursively
 		while (this.currentToken.type === TOKEN_LBRACE) {
 			this.eat(TOKEN_LBRACE);
 			let argNodes = [];
-			// Recursively parse the content of the required argument until matching '}'
 			while (this.currentToken.type !== TOKEN_RBRACE) {
 				let node = this.parseElement();
-				if (node !== null) {
+				if (node) {
 					argNodes.push(node);
 				} else {
-					// 如果 parseElement 返回 null，则主动消费当前 token 以避免死循环
-					if (this.currentToken.type !== TOKEN_EOF) {
+					if (this.currentToken.type !== TOKEN_RBRACE) {
 						this.eat(this.currentToken.type);
 					}
 				}
 			}
 			this.eat(TOKEN_RBRACE);
-			// Wrap the parsed nodes into a Document node representing the argument content.
 			requiredArguments.push(new Document(argNodes));
 		}
 

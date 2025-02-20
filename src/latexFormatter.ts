@@ -42,11 +42,10 @@ function formatNode(node: any, indentLevel: number): string {
 		case "Command":
 			let cmdStr = `\\${node.name}`;
 			if (node.optionalArgument) {
-				cmdStr += `[${node.optionalArgument}]`;
+				cmdStr += `[${formatAST(node.optionalArgument)}]`;
 			}
 			if (node.requiredArguments && node.requiredArguments.length > 0) {
 				for (const arg of node.requiredArguments) {
-					// arg 是一个 Document 节点，递归格式化其内容
 					cmdStr += `{${formatAST(arg)}}`;
 				}
 			}
