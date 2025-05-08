@@ -16,6 +16,11 @@ export function formatAST(ast: any): string {
  */
 function formatNode(node: any, indentLevel: number): string {
 	const indent = indentLevel > 0 ? "  ".repeat(indentLevel) : "";
+	// Handle cases where node might be null or undefined, although ideally the parser shouldn't produce them in the main tree.
+	if (!node || !node.constructor) {
+		// console.warn("[Formatter] Encountered null or invalid node.");
+		return "";
+	}
 	const nodeType = node.constructor.name;
 
     // List of commands whose arguments (both optional and required) should generally be treated as raw text
@@ -28,28 +33,31 @@ function formatNode(node: any, indentLevel: number): string {
 
 	switch (nodeType) {
 		case "Document":
+            // Ensure children is an array before mapping
+            if (!Array.isArray(node.children)) return "";
 			return node.children.map((child: any) => formatNode(child, indentLevel)).join(""); // Pass indentLevel for children of document if needed for top-level items
 
 		case "Text":
 			if (node.escaped) {
 				// The text is already escaped (e.g., \\$, \\%) or is from a math environment, return it directly
-				return node.text;
+				return node.text || ""; // Ensure text exists
 			} else {
-				return escapeSpecialChars(node.text);
+				return escapeSpecialChars(node.text || ""); // Ensure text exists
 			}
 
 		case "Math":
 		case "MathNode": // Ensure both constructor names are handled if they differ
+            const content = node.content || ""; // Ensure content exists
 			if (node.inline) {
-				return `$${node.content}$`;
+				return `$${content}$`;
 			} else {
 				// For display math, ensure content is trimmed and newlines are consistent
-                const trimmedContent = node.content.trim();
+                const trimmedContent = content.trim();
 				return `$$\n${indent}${trimmedContent}\n${indent}$$`; // Indent content of display math if desired, or keep as is
 			}
 
 		case "Command":
-			let cmdStr = `\\${node.name}`;
+			let cmdStr = `\\${node.name || 'unknownCommand'}`; // Ensure name exists
 			if (node.optionalArgument) {
                 if (rawArgumentCommands.includes(node.name)) {
                     cmdStr += `[${formatRawNode(node.optionalArgument)}]`;
@@ -57,8 +65,9 @@ function formatNode(node: any, indentLevel: number): string {
 				    cmdStr += `[${formatAST(node.optionalArgument)}]`;
                 }
 			}
-			if (node.requiredArguments && node.requiredArguments.length > 0) {
+			if (node.requiredArguments && Array.isArray(node.requiredArguments) && node.requiredArguments.length > 0) {
 				for (const arg of node.requiredArguments) {
+                    if (!arg) continue; // Skip null/undefined arguments
 					if (rawArgumentCommands.includes(node.name)) {
                         // Special case for \href{URL}{TEXT} - URL is raw, TEXT is formatted
                         if (node.name === "href" && node.requiredArguments.indexOf(arg) === 1) {
@@ -79,18 +88,31 @@ function formatNode(node: any, indentLevel: number): string {
 				"multline", "multline*", "split", "array", "subequations"
 			];
 
-			const currentEnvName = node.name.trim(); // Ensure env name is trimmed for comparison
+			const currentEnvName = (node.name || 'unknownEnv').trim(); // Ensure name exists and trim
+            let envBeginStr = `${indent}\\begin{${currentEnvName}}`;
+
+            // --- Format Environment Arguments ---
+            if (node.environmentArguments && Array.isArray(node.environmentArguments) && node.environmentArguments.length > 0) {
+                // Assume environment arguments (like {13} in thebibliography) should be treated as raw.
+                for (const arg of node.environmentArguments) {
+                    if (!arg) continue; // Skip null/undefined arguments
+                    envBeginStr += `{${formatRawNode(arg)}}`; // Use formatRawNode
+                }
+            }
+            // --- End Format Environment Arguments ---
+
+            // Ensure children is an array
+            const childrenToFormat = Array.isArray(node.children) ? node.children : [];
 
 			if (mathEnvs.includes(currentEnvName)) {
-				// Special handling for math environments: do not add extra newlines and indentation to content
-				let envStr = `${indent}\\begin{${currentEnvName}}`; // Apply indent to \begin itself
+				let envStr = envBeginStr; // Start with the \begin{...}{...} string
                 // Math content is often a single Text node marked as 'escaped' or pre-formatted
-				envStr += node.children.map((child: any) => formatRawNode(child)).join(""); // Use formatRawNode for math content
+				envStr += childrenToFormat.map((child: any) => formatRawNode(child)).join(""); // Use formatRawNode for math content
 				envStr += `\\end{${currentEnvName}}`;
 				return envStr;
 			} else {
-				let envStr = `${indent}\\begin{${currentEnvName}}\n`;
-				envStr += node.children.map((child: any) => formatNode(child, indentLevel + 1)).join(""); // Indent children
+				let envStr = envBeginStr + "\n"; // Add newline after \begin{...}{...}
+				envStr += childrenToFormat.map((child: any) => formatNode(child, indentLevel + 1)).join(""); // Indent children
 				envStr += `\n${indent}\\end{${currentEnvName}}`;
 				return envStr;
 			}
@@ -107,38 +129,41 @@ function formatNode(node: any, indentLevel: number): string {
  * @param node The AST node (typically a Document node representing an argument).
  */
 function formatRawNode(node: any): string {
+    if (!node || !node.constructor) return "";
 	const nodeType = node.constructor.name;
 	switch (nodeType) {
 		case "Document":
+            if (!Array.isArray(node.children)) return "";
 			return node.children.map((child: any) => formatRawNode(child)).join("");
 		case "Text":
 			// Directly return the raw text without escaping
-			return node.text;
+			return node.text || "";
 		case "Math":
         case "MathNode":
+            const mathContent = node.content || "";
 			if (node.inline) {
-				return `$${node.content}$`;
+				return `$${mathContent}$`;
 			} else {
-                const trimmedContent = node.content.trim();
+                const trimmedContent = mathContent.trim();
 				return `$$\n${trimmedContent}\n$$`;
 			}
 		case "Command": // Commands within raw arguments should still be formatted as commands
-			let cmdStr = `\\${node.name}`;
+			let cmdStr = `\\${node.name || 'unknownCmd'}`;
 			if (node.optionalArgument) {
-                // Decide if optional arguments of commands inside raw arguments should also be raw.
-                // For simplicity, let's assume they follow the same "raw" principle if the parent command is raw.
 				cmdStr += `[${formatRawNode(node.optionalArgument)}]`;
 			}
-			if (node.requiredArguments && node.requiredArguments.length > 0) {
+			if (node.requiredArguments && Array.isArray(node.requiredArguments) && node.requiredArguments.length > 0) {
 				for (const arg of node.requiredArguments) {
+                    if (!arg) continue;
 					cmdStr += `{${formatRawNode(arg)}}`;
 				}
 			}
 			return cmdStr;
 		case "Environment": // Environments within raw arguments
-			let envStr = `\\begin{${node.name}}\n` + // Basic formatting for environments
-				node.children.map((child: any) => formatRawNode(child)).join("") +
-				`\n\\end{${node.name}}`;
+            const childrenToFormatRaw = Array.isArray(node.children) ? node.children : [];
+			let envStr = `\\begin{${node.name || 'unknownEnv'}}\n` + // Basic formatting for environments
+				childrenToFormatRaw.map((child: any) => formatRawNode(child)).join("") +
+				`\n\\end{${node.name || 'unknownEnv'}}`;
 			return envStr;
 		default:
             // console.warn(`[Formatter - Raw] Unknown node type: ${nodeType}`);
@@ -199,7 +224,6 @@ function findFirstUnescapedPercent(line: string): number {
 function escapeNonComment(text: string): string {
 	// 转义除 "%" 和 "~" 外的特殊字符： # $ & _ ^ { }
     // 注意：这里仍然会转义下划线 `_`。
-    // 如果某些上下文中的下划线永远不应转义，则此函数或其调用方式需要更精细的控制。
     // 对于 \label 等命令，我们通过 formatRawNode 绕过了这个函数。
 	let escaped = text.replace(/([#$&_^{}])/g, "\\$1");
 	// 对 "%" 进行单独转义 (如果它不是行注释的一部分)

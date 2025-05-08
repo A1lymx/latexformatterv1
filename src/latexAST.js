@@ -151,13 +151,7 @@ class Lexer {
 		    return new Token(TOKEN_TEXT, text_val);
         } else {
             // If text_val is empty, it means we hit a special char or newline immediately.
-            // Newlines and special chars are handled by other rules or the next call.
-            // This path should ideally not be strictly necessary if all cases above are correct,
-            // but acts as a fallback to prevent infinite loops.
-            // console.warn(`[DEBUG][Lexer] Empty text_val detected at pos ${this.pos}. Current char: ${JSON.stringify(this.text[this.pos])}. Re-evaluating.`);
-            // Don't advance pos here, let the next iteration handle the character.
-            // If we are here, the character at this.pos *must* be one of the stop characters.
-            // The next call to getNextToken() will handle it.
+            // Let the next getNextToken call handle it.
             return this.getNextToken(); // Re-evaluate from the current position
         }
 	}
@@ -176,7 +170,7 @@ class Lexer {
     }
 }
 
-// --- AST Node Definitions --- (保持不变)
+// --- AST Node Definitions ---
 class Document {
 	constructor(children) { this.children = children; }
 	toString() { return `Document(${this.children.map((child) => child.toString()).join(", ")})`; }
@@ -198,16 +192,26 @@ class Command {
 		return `Command(name=${JSON.stringify(this.name)}, arguments=${JSON.stringify(argsStr)})`;
 	}
 }
+// Modified Environment class to include arguments
 class Environment {
-	constructor(name, children) { this.name = name; this.children = children; }
-	toString() { return `Environment(name=${JSON.stringify(this.name)}, children=[${this.children.map((child) => child.toString()).join(", ")}])`; }
+	constructor(name, children, environmentArguments = []) { // Added environmentArguments
+		this.name = name;
+		this.children = children;
+        this.environmentArguments = environmentArguments; // Store arguments
+	}
+	toString() {
+        // Include arguments in the string representation
+        let argsStr = "";
+        this.environmentArguments.forEach(arg => argsStr += `{${arg.toString()}}`);
+		return `Environment(name=${JSON.stringify(this.name)}, arguments=${JSON.stringify(argsStr)}, children=[${this.children.map((child) => child.toString()).join(", ")}])`;
+	}
 }
 class MathNode {
 	constructor(content, inline = true) { this.content = content; this.inline = inline; }
 	toString() { return `Math(inline=${this.inline}, content=${JSON.stringify(this.content)})`; }
 }
 
-// --- Parser --- (保持不变, 使用 latexAST_js_fix_002 中的版本)
+// --- Parser ---
 class Parser {
 	constructor(lexer) {
 		this.lexer = lexer;
@@ -236,10 +240,7 @@ class Parser {
 				if (this.currentToken === preParseToken && this.currentToken.type !== TOKEN_EOF) {
 					// console.log(`[DEBUG][Parser] MainLoop: parseElement for ${preParseToken.type} returned null and did not consume token. Consuming ${preParseToken.toString()}`);
 					this.eat(preParseToken.type);
-				} else if (this.currentToken !== preParseToken) {
-                    // Token was advanced by parseElement (e.g. isolated \end), do nothing more here.
-                    // console.log(`[DEBUG][Parser] MainLoop: parseElement for ${preParseToken.type} returned null but consumed token. Next token is ${this.currentToken.toString()}`);
-                }
+				}
 			}
 		}
 		return new Document(nodes);
@@ -303,22 +304,39 @@ class Parser {
 		return new Command(commandToken.value, optionalArgument, requiredArguments);
 	}
 
+	// Modified parseEnvironment to handle arguments
 	parseEnvironment() {
 		this.eat(TOKEN_COMMAND); // Consume 'begin'
 		if (this.currentToken.type !== TOKEN_LBRACE) throw new Error("Expected { after \\begin");
-		this.eat(TOKEN_LBRACE);
+		this.eat(TOKEN_LBRACE); // {
 
 		let envName = "";
-        // Allow environment names to contain commands (e.g., \textit{foo}) or be simple text, possibly ending with *
 		while (this.currentToken.type === TOKEN_TEXT || this.currentToken.type === TOKEN_COMMAND || (this.currentToken.type === TOKEN_TEXT && this.currentToken.value.endsWith('*'))) {
             if (this.currentToken.type === TOKEN_COMMAND) envName += "\\";
 			envName += this.currentToken.value;
 			this.eat(this.currentToken.type);
 		}
 		if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected RBRACE for environment name, got ${this.currentToken.type} "${this.currentToken.value}"`);
-		this.eat(TOKEN_RBRACE);
+		this.eat(TOKEN_RBRACE); // }
 
         const trimmedEnvName = envName.trim();
+
+        // --- Parse Environment Arguments ---
+        const environmentArguments = [];
+        while (this.currentToken.type === TOKEN_LBRACE) {
+            this.eat(TOKEN_LBRACE); // {
+            const argNodes = [];
+            while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
+                const preParseToken = this.currentToken;
+                const node = this.parseElement(); // Recursively parse argument content
+                if (node) argNodes.push(node);
+                else if (this.currentToken === preParseToken && this.currentToken.type !== TOKEN_EOF) this.eat(this.currentToken.type);
+            }
+            if (this.currentToken.type === TOKEN_RBRACE) this.eat(TOKEN_RBRACE); // }
+            else throw new Error(`Syntax error: Unclosed argument for environment \\begin{${trimmedEnvName}}. Expected RBRACE, got ${this.currentToken.type}`);
+            environmentArguments.push(new Document(argNodes));
+        }
+        // --- End Parse Environment Arguments ---
 
 		const mathEnvs = ["equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*", "split", "array", "subequations"];
 		if (mathEnvs.includes(trimmedEnvName)) {
@@ -327,10 +345,9 @@ class Parser {
 			while (true) {
 				if (this.currentToken.type === TOKEN_EOF) { console.warn(`[DEBUG][Parser] EOF in math env: ${trimmedEnvName}`); break; }
 				if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end" && braceDepth === 0) {
-					// Lookahead to check if this \end matches the current environment
-                    const currentLexerPos = this.lexer.pos; // Save current lexer position
-                    const lookaheadLexer = new Lexer(this.lexer.text.substring(currentLexerPos)); // Create lookahead from *current* position of main lexer
-                    const lbraceToken = lookaheadLexer.getNextToken(); // Should be '{'
+                    const currentLexerPos = this.lexer.pos;
+                    const lookaheadLexer = new Lexer(this.lexer.text.substring(currentLexerPos));
+                    const lbraceToken = lookaheadLexer.getNextToken();
 					if (lbraceToken.type === TOKEN_LBRACE) {
 						let lookaheadEnvName = "";
                         let namePartToken = lookaheadLexer.getNextToken();
@@ -339,7 +356,7 @@ class Parser {
                             lookaheadEnvName += namePartToken.value;
                             namePartToken = lookaheadLexer.getNextToken();
                         }
-						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break; // Match found
+						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break;
 					}
 				}
 				if (this.currentToken.type === TOKEN_LBRACE) braceDepth++;
@@ -349,11 +366,10 @@ class Parser {
 				this.eat(this.currentToken.type);
 			}
 			const children = [new Text(mathContent, true)];
-            // Consume the actual \end{envName}
             if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
-                this.eat(TOKEN_COMMAND); // \end
+                 this.eat(TOKEN_COMMAND);
                 if (this.currentToken.type !== TOKEN_LBRACE) throw new Error(`Expected { after \\end for math environment ${trimmedEnvName}`);
-                this.eat(TOKEN_LBRACE); // {
+                this.eat(TOKEN_LBRACE);
                 let endEnvName = "";
                 while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
                     if (this.currentToken.type === TOKEN_COMMAND) endEnvName += "\\";
@@ -361,12 +377,12 @@ class Parser {
                     this.eat(this.currentToken.type);
                 }
                 if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected } for \\end name in math environment ${trimmedEnvName}`);
-                this.eat(TOKEN_RBRACE); // }
+                this.eat(TOKEN_RBRACE);
                 if (trimmedEnvName !== endEnvName.trim()) throw new Error(`Math env name mismatch: ${trimmedEnvName} vs ${endEnvName.trim()}`);
             } else {
                 throw new Error(`Expected \\end for math environment ${trimmedEnvName}, found ${this.currentToken.type}`);
             }
-			return new Environment(trimmedEnvName, children);
+			return new Environment(trimmedEnvName, children, environmentArguments); // Pass arguments
 		} else { // Non-math environments
 			const children = [];
 			while (true) {
@@ -383,7 +399,7 @@ class Parser {
                             lookaheadEnvName += namePartToken.value;
                             namePartToken = lookaheadLexer.getNextToken();
                         }
-						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break; // End of current env
+						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break;
 					}
 				}
                 const preParseToken_envChildren = this.currentToken;
@@ -392,16 +408,14 @@ class Parser {
 					children.push(node);
 				} else {
                     if (this.currentToken === preParseToken_envChildren && this.currentToken.type !== TOKEN_EOF) {
-                        // console.log(`[DEBUG][Parser][Env:${trimmedEnvName}] parseElement for ${preParseToken_envChildren.type} returned null and did not consume. Consuming ${preParseToken_envChildren.toString()}`);
                         this.eat(preParseToken_envChildren.type);
                     }
                 }
 			}
-            // Consume the actual \end{envName}
             if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
-                this.eat(TOKEN_COMMAND); // \end
+                this.eat(TOKEN_COMMAND);
                 if (this.currentToken.type !== TOKEN_LBRACE) throw new Error(`Expected { after \\end for non-math environment ${trimmedEnvName}`);
-                this.eat(TOKEN_LBRACE); // {
+                this.eat(TOKEN_LBRACE);
                 let endEnvName = "";
                 while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
                      if (this.currentToken.type === TOKEN_COMMAND) endEnvName += "\\";
@@ -409,12 +423,12 @@ class Parser {
                     this.eat(this.currentToken.type);
                 }
                 if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected } for \\end name in non-math environment ${trimmedEnvName}`);
-                this.eat(TOKEN_RBRACE); // }
+                this.eat(TOKEN_RBRACE);
                 if (trimmedEnvName !== endEnvName.trim()) throw new Error(`Non-math env name mismatch: ${trimmedEnvName} vs ${endEnvName.trim()}`);
             } else if (this.currentToken.type !== TOKEN_EOF) {
                 throw new Error(`Expected \\end for non-math environment ${trimmedEnvName}, found ${this.currentToken.type}`);
             }
-			return new Environment(trimmedEnvName, children);
+			return new Environment(trimmedEnvName, children, environmentArguments); // Pass arguments
 		}
 	}
 }
@@ -440,10 +454,10 @@ function parseLatex(text) {
             console.error("Current token at error:", parser.currentToken.toString());
             const {line, column} = parser.lexer.getCurrentPositionDetails();
             console.error(`Error near Line: ${line}, Column: ${column}`);
-            const errorPos = parser.lexer.pos; // Use the main lexer's pos for context
+            const errorPos = parser.lexer.pos;
             const contextChars = 30;
             const startContext = Math.max(0, errorPos - contextChars);
-            const endContext = Math.min(lexer.text.length, errorPos + contextChars); // Use main lexer's text
+            const endContext = Math.min(lexer.text.length, errorPos + contextChars);
             console.error("Error context:", `...${lexer.text.substring(startContext, errorPos)}[ERROR HERE]${lexer.text.substring(errorPos,endContext)}...`);
         }
         throw e;
@@ -451,3 +465,5 @@ function parseLatex(text) {
 	return ast;
 }
 module.exports = {parseLatex, Lexer, Parser, Document, Text, Command, Environment, MathNode, Token};
+
+
