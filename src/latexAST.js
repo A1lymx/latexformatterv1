@@ -8,6 +8,7 @@ const TOKEN_RBRACKET = "RBRACKET";
 const TOKEN_EOF = "EOF";
 const TOKEN_MATH_INLINE = "MATH_INLINE";
 const TOKEN_MATH_DISPLAY = "MATH_DISPLAY";
+const TOKEN_NEWLINE = "NEWLINE"; // Optional: Can explicitly tokenize newlines
 
 // --- Token Class ---
 class Token {
@@ -27,455 +28,426 @@ class Lexer {
 		this.pos = 0;
 	}
 
+	// Helper to get current position for error reporting
+	getCurrentPositionDetails() {
+		const lines = this.text.substring(0, this.pos).split('\n');
+		const line = lines.length;
+		const column = lines[lines.length - 1].length + 1;
+		return { line, column };
+	}
+
+
 	getNextToken() {
-		// If reached the end of the text, return EOF
 		if (this.pos >= this.text.length) {
-			const token = new Token(TOKEN_EOF, null);
-			console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-			return token;
+			return new Token(TOKEN_EOF, null);
 		}
+
+        // --- Comment Handling ---
+        let tempPos = this.pos;
+        let lineStartIndex = this.pos;
+        while(lineStartIndex > 0 && this.text[lineStartIndex-1] !== '\n' && this.text[lineStartIndex-1] !== '\r') {
+            lineStartIndex--;
+        }
+        let nonWhitespaceFoundBeforePos = false;
+        for(let k=lineStartIndex; k < tempPos; k++) {
+            if (this.text[k] !== ' ' && this.text[k] !== '\t') {
+                nonWhitespaceFoundBeforePos = true;
+                break;
+            }
+        }
+
+        if (this.text[this.pos] === '%' && !nonWhitespaceFoundBeforePos) {
+            const start = this.pos;
+            while (this.pos < this.text.length && this.text[this.pos] !== '\n' && this.text[this.pos] !== '\r') {
+                this.pos++;
+            }
+            const commentText = this.text.slice(start, this.pos);
+            return new Token(TOKEN_TEXT, commentText); // Return full comment line as text
+        }
+        // --- End Comment Handling ---
 
 		const current = this.text[this.pos];
 
-		// Process math formulas starting with '$'
+        // --- Newline Handling ---
+        if (current === '\n') {
+            this.pos++;
+            return new Token(TOKEN_TEXT, '\n'); // Treat newline as text
+        }
+        if (current === '\r') {
+            this.pos++;
+            if (this.pos < this.text.length && this.text[this.pos] === '\n') {
+                this.pos++; // Consume \n after \r
+                return new Token(TOKEN_TEXT, '\r\n');
+            }
+            return new Token(TOKEN_TEXT, '\r');
+        }
+        // --- End Newline Handling ---
+
+
 		if (current === "$") {
-			// Check if it's a display math formula: two consecutive '$'
 			if (this.pos + 1 < this.text.length && this.text[this.pos + 1] === "$") {
-				this.pos += 2; // Consume the starting "$$"
+				this.pos += 2;
 				const start = this.pos;
-				// Accumulate until encountering the ending "$$"
-				while (
-					this.pos < this.text.length &&
-					!(this.text[this.pos] === "$" && this.pos + 1 < this.text.length && this.text[this.pos + 1] === "$")
-				) {
+				while (this.pos < this.text.length && !(this.text[this.pos] === "$" && this.pos + 1 < this.text.length && this.text[this.pos + 1] === "$")) {
 					this.pos++;
 				}
 				const content = this.text.slice(start, this.pos);
-				if (this.pos < this.text.length) {
-					this.pos += 2; // Consume the ending "$$"
-				}
-				const token = new Token(TOKEN_MATH_DISPLAY, content);
-				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-				return token;
+				if (this.pos < this.text.length) this.pos += 2;
+				return new Token(TOKEN_MATH_DISPLAY, content);
 			} else {
-				// Inline math formula: single '$'
-				this.pos++; // Consume the starting '$'
+				this.pos++;
 				const start = this.pos;
 				while (this.pos < this.text.length && this.text[this.pos] !== "$") {
 					this.pos++;
 				}
 				const content = this.text.slice(start, this.pos);
-				if (this.pos < this.text.length) {
-					this.pos++; // Consume the ending '$'
-				}
-				const token = new Token(TOKEN_MATH_INLINE, content);
-				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-				return token;
+				if (this.pos < this.text.length) this.pos++;
+				return new Token(TOKEN_MATH_INLINE, content);
 			}
 		}
 
-		// Process commands or escape sequences starting with '\'
 		if (current === "\\") {
-			// Look ahead: if next character is a letter, treat as command.
 			if (this.pos + 1 < this.text.length && /[a-zA-Z]/.test(this.text[this.pos + 1])) {
 				this.pos++; // Consume the backslash
 				const start = this.pos;
-				while (this.pos < this.text.length && /[a-zA-Z]/.test(this.text[this.pos])) {
+				while (this.pos < this.text.length && /[a-zA-Z*]/.test(this.text[this.pos])) {
 					this.pos++;
 				}
 				const cmd = this.text.slice(start, this.pos);
-				const token = new Token(TOKEN_COMMAND, cmd);
-				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-				return token;
+				return new Token(TOKEN_COMMAND, cmd);
 			} else {
-				// Escape sequence: consume '\' and the next character,
-				// return a TEXT token that preserves the backslash.
 				this.pos++; // Consume '\'
-				const escapedChar = this.text[this.pos];
-				this.pos++; // Consume the escaped character
-				const token = new Token(TOKEN_TEXT, "\\" + escapedChar);
-				token.escaped = true; // Mark this token as escaped
-				console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()} (escaped)`);
-				return token;
+                if (this.pos < this.text.length) {
+				    const escapedChar = this.text[this.pos];
+				    this.pos++; // Consume the escaped character
+				    const token = new Token(TOKEN_TEXT, "\\" + escapedChar);
+				    token.escaped = true;
+				    return token;
+                } else { // Trailing backslash
+                    const token = new Token(TOKEN_TEXT, "\\");
+                    token.escaped = true;
+                    return token;
+                }
 			}
 		}
 
-		// Process left brace '{'
-		if (current === "{") {
-			this.pos++;
-			const token = new Token(TOKEN_LBRACE, "{");
-			console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-			return token;
-		}
+		if (current === "{") { this.pos++; return new Token(TOKEN_LBRACE, "{"); }
+		if (current === "}") { this.pos++; return new Token(TOKEN_RBRACE, "}"); }
+		if (current === "[") { this.pos++; return new Token(TOKEN_LBRACKET, "["); }
+		if (current === "]") { this.pos++; return new Token(TOKEN_RBRACKET, "]"); }
 
-		// Process right brace '}'
-		if (current === "}") {
-			this.pos++;
-			const token = new Token(TOKEN_RBRACE, "}");
-			console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-			return token;
-		}
-
-		// Process left bracket '['
-		if (current === "[") {
-			this.pos++;
-			const token = new Token(TOKEN_LBRACKET, "[");
-			console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-			return token;
-		}
-
-		// Process right bracket ']'
-		if (current === "]") {
-			this.pos++;
-			const token = new Token(TOKEN_RBRACKET, "]");
-			console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-			return token;
-		}
-
-		// Process plain text until encountering a special character: '\', '{', '}', '[', ']', or '$'
+		// --- Plain Text Handling (stops at special chars AND newlines) ---
 		const start = this.pos;
-		while (this.pos < this.text.length && !["\\", "{", "}", "[", "]", "$"].includes(this.text[this.pos])) {
+		while (
+            this.pos < this.text.length &&
+            // Stop characters include LaTeX specials and newlines
+            !["\\", "{", "}", "[", "]", "$", "\n", "\r"].includes(this.text[this.pos])
+        ) {
 			this.pos++;
 		}
 		const text_val = this.text.slice(start, this.pos);
-		const token = new Token(TOKEN_TEXT, text_val);
-		console.log(`[DEBUG][Lexer] pos=${this.pos}: ${token.toString()}`);
-		return token;
+
+		if (text_val.length > 0) {
+		    return new Token(TOKEN_TEXT, text_val);
+        } else {
+            // If text_val is empty, it means we hit a special char or newline immediately.
+            // Newlines and special chars are handled by other rules or the next call.
+            // This path should ideally not be strictly necessary if all cases above are correct,
+            // but acts as a fallback to prevent infinite loops.
+            // console.warn(`[DEBUG][Lexer] Empty text_val detected at pos ${this.pos}. Current char: ${JSON.stringify(this.text[this.pos])}. Re-evaluating.`);
+            // Don't advance pos here, let the next iteration handle the character.
+            // If we are here, the character at this.pos *must* be one of the stop characters.
+            // The next call to getNextToken() will handle it.
+            return this.getNextToken(); // Re-evaluate from the current position
+        }
 	}
+
+    getAllTokens() {
+        const tokens = [];
+        let token;
+        const originalPos = this.pos;
+        this.pos = 0;
+        do {
+            token = this.getNextToken();
+            tokens.push(token);
+        } while (token.type !== TOKEN_EOF);
+        this.pos = originalPos;
+        return tokens;
+    }
 }
 
-// --- AST Node Definitions ---
+// --- AST Node Definitions --- (保持不变)
 class Document {
-	constructor(children) {
-		this.children = children;
-	}
-	toString() {
-		return `Document(${this.children.map((child) => child.toString()).join(", ")})`;
-	}
+	constructor(children) { this.children = children; }
+	toString() { return `Document(${this.children.map((child) => child.toString()).join(", ")})`; }
 }
-
 class Text {
-	constructor(text, escaped = false) {
-		this.text = text;
-		this.escaped = escaped;
-	}
-	toString() {
-		return `Text(${JSON.stringify(this.text)})`;
-	}
+	constructor(text, escaped = false) { this.text = text; this.escaped = escaped; }
+	toString() { return `Text(${JSON.stringify(this.text)})`; }
 }
-
-// Updated Command AST node to support an optional argument.
 class Command {
 	constructor(name, optionalArgument = null, requiredArguments = []) {
 		this.name = name;
-		this.optionalArgument = optionalArgument; // Now a Document node
-		this.requiredArguments = requiredArguments; // Array of Document nodes
+		this.optionalArgument = optionalArgument;
+		this.requiredArguments = requiredArguments;
 	}
 	toString() {
 		let argsStr = "";
-		if (this.optionalArgument) {
-			argsStr += `[${this.optionalArgument.toString()}]`;
-		}
-		for (const arg of this.requiredArguments) {
-			argsStr += `{${arg.toString()}}`;
-		}
+		if (this.optionalArgument) argsStr += `[${this.optionalArgument.toString()}]`;
+		this.requiredArguments.forEach(arg => argsStr += `{${arg.toString()}}`);
 		return `Command(name=${JSON.stringify(this.name)}, arguments=${JSON.stringify(argsStr)})`;
 	}
 }
-
 class Environment {
-	constructor(name, children) {
-		this.name = name;
-		this.children = children;
-	}
-	toString() {
-		return `Environment(name=${JSON.stringify(this.name)}, children=[${this.children.map((child) => child.toString()).join(", ")}])`;
-	}
+	constructor(name, children) { this.name = name; this.children = children; }
+	toString() { return `Environment(name=${JSON.stringify(this.name)}, children=[${this.children.map((child) => child.toString()).join(", ")}])`; }
 }
-
-// Since 'Math' is reserved in JavaScript, we use 'MathNode' instead.
 class MathNode {
-	constructor(content, inline = true) {
-		this.content = content;
-		this.inline = inline; // true indicates inline math, false indicates display math
-	}
-	toString() {
-		return `Math(inline=${this.inline}, content=${JSON.stringify(this.content)})`;
-	}
+	constructor(content, inline = true) { this.content = content; this.inline = inline; }
+	toString() { return `Math(inline=${this.inline}, content=${JSON.stringify(this.content)})`; }
 }
 
-// --- Parser ---
+// --- Parser --- (保持不变, 使用 latexAST_js_fix_002 中的版本)
 class Parser {
 	constructor(lexer) {
 		this.lexer = lexer;
 		this.currentToken = this.lexer.getNextToken();
-		console.log(`[DEBUG][Parser] Initial token: ${this.currentToken.toString()}`);
 	}
 
 	eat(tokenType) {
 		if (this.currentToken.type === tokenType) {
-			console.log(`[DEBUG][Parser] Consuming token: ${this.currentToken.toString()}`);
 			this.currentToken = this.lexer.getNextToken();
-			console.log(`[DEBUG][Parser] Next token: ${this.currentToken.toString()}`);
 		} else {
-			throw new Error(`Syntax error: expected ${tokenType}, got ${this.currentToken.type}`);
+            const {line, column} = this.lexer.getCurrentPositionDetails();
+			throw new Error(`Syntax error (eat): expected ${tokenType}, got ${this.currentToken.type} with value "${this.currentToken.value}" near L${line}:C${column}`);
 		}
 	}
 
 	parse() {
 		const nodes = [];
-		let iteration = 0;
 		while (this.currentToken.type !== TOKEN_EOF) {
-			iteration++;
-			console.log(
-				`[DEBUG][Parser] parse() loop iteration ${iteration}, current token: ${this.currentToken.toString()}`
-			);
+			const preParseToken = this.currentToken;
 			const node = this.parseElement();
-			// When parseElement returns null, force consumption of the token to avoid an infinite loop
+
 			if (node !== null) {
 				nodes.push(node);
 			} else {
-				if (this.currentToken.type !== TOKEN_EOF) {
-					console.log(
-						`[DEBUG][Parser] parseElement returned null, force consuming token: ${this.currentToken.toString()}`
-					);
-					this.eat(this.currentToken.type);
-				}
+				// If parseElement returned null and did not consume the token, consume it here.
+				if (this.currentToken === preParseToken && this.currentToken.type !== TOKEN_EOF) {
+					// console.log(`[DEBUG][Parser] MainLoop: parseElement for ${preParseToken.type} returned null and did not consume token. Consuming ${preParseToken.toString()}`);
+					this.eat(preParseToken.type);
+				} else if (this.currentToken !== preParseToken) {
+                    // Token was advanced by parseElement (e.g. isolated \end), do nothing more here.
+                    // console.log(`[DEBUG][Parser] MainLoop: parseElement for ${preParseToken.type} returned null but consumed token. Next token is ${this.currentToken.toString()}`);
+                }
 			}
 		}
 		return new Document(nodes);
 	}
 
 	parseElement() {
-		console.log(`[DEBUG][Parser] parseElement, current token: ${this.currentToken.toString()}`);
 		const token = this.currentToken;
 
-		if (token.type === TOKEN_TEXT) {
-			this.eat(TOKEN_TEXT);
-			return new Text(token.value, token.escaped || false);
-		}
-
-		// Process math formulas (inline or display)
+		if (token.type === TOKEN_TEXT) { this.eat(TOKEN_TEXT); return new Text(token.value, token.escaped || false); }
 		if (token.type === TOKEN_MATH_INLINE || token.type === TOKEN_MATH_DISPLAY) {
 			const inline = token.type === TOKEN_MATH_INLINE;
 			this.eat(token.type);
 			return new MathNode(token.value, inline);
 		}
-
 		if (token.type === TOKEN_COMMAND) {
-			// Determine whether this is the start or end of an environment
-			if (token.value === "begin") {
-				return this.parseEnvironment();
-			} else if (token.value === "end") {
-				console.log(`[DEBUG][Parser] Encountered isolated \\end in parseElement, consuming and returning null`);
-				this.eat(TOKEN_COMMAND);
-				return null;
-			} else {
-				return this.parseCommand();
-			}
+			if (token.value === "begin") return this.parseEnvironment();
+			if (token.value === "end") { this.eat(TOKEN_COMMAND); return null; } // Isolated \end, consumed, no node
+			return this.parseCommand();
 		}
-
-		// For other token types, simply skip (and print a message)
-		console.log(`[DEBUG][Parser] Unrecognized token type ${token.type}, skipping`);
-		this.eat(token.type);
-		return null;
+		if (token.type === TOKEN_LBRACE || token.type === TOKEN_RBRACE || token.type === TOKEN_LBRACKET || token.type === TOKEN_RBRACKET) {
+			this.eat(token.type);
+			return new Text(token.value);
+		}
+		// console.log(`[DEBUG][Parser] parseElement: Unhandled token ${token.toString()}, returning null.`);
+		return null; // Unhandled token, let parse() loop consume it
 	}
 
-	// Modified parseCommand to support multiple required arguments
-	// Modified parseCommand to support multiple required arguments and preserve inner commands
-	// Modified parseCommand to support multiple required arguments and a recursive optional argument
 	parseCommand() {
-		const token = this.currentToken;
-		console.log(`[DEBUG][Parser] Parsing command: ${token}`);
-		this.eat(TOKEN_COMMAND);
+		const commandToken = this.currentToken;
+		this.eat(TOKEN_COMMAND); // Eat command name
 		let optionalArgument = null;
-		let requiredArguments = [];
+		const requiredArguments = [];
 
-		// Parse optional argument recursively if present
 		if (this.currentToken.type === TOKEN_LBRACKET) {
 			this.eat(TOKEN_LBRACKET);
-			let optNodes = [];
-			// Parse until the closing bracket is encountered
-			while (this.currentToken.type !== TOKEN_RBRACKET) {
-				let node = this.parseElement();
-				if (node) {
-					optNodes.push(node);
-				} else {
-					if (this.currentToken.type !== TOKEN_RBRACKET) {
-						this.eat(this.currentToken.type);
-					}
-				}
+			const optNodes = [];
+			while (this.currentToken.type !== TOKEN_RBRACKET && this.currentToken.type !== TOKEN_EOF) {
+				const preParseToken = this.currentToken;
+				const node = this.parseElement();
+				if (node) optNodes.push(node);
+				else if (this.currentToken === preParseToken && this.currentToken.type !== TOKEN_EOF) this.eat(this.currentToken.type);
 			}
-			this.eat(TOKEN_RBRACKET);
-			optionalArgument = new Document(optNodes); // Wrap in a Document node
+			if (this.currentToken.type === TOKEN_RBRACKET) this.eat(TOKEN_RBRACKET);
+			else throw new Error(`Syntax error: Unclosed optional argument for command \\${commandToken.value}. Expected RBRACKET, got ${this.currentToken.type}`);
+			optionalArgument = new Document(optNodes);
 		}
 
-		// Parse one or more required arguments in braces recursively
 		while (this.currentToken.type === TOKEN_LBRACE) {
 			this.eat(TOKEN_LBRACE);
-			let argNodes = [];
-			while (this.currentToken.type !== TOKEN_RBRACE) {
-				let node = this.parseElement();
-				if (node) {
-					argNodes.push(node);
-				} else {
-					if (this.currentToken.type !== TOKEN_RBRACE) {
-						this.eat(this.currentToken.type);
-					}
-				}
+			const argNodes = [];
+			while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
+                const preParseToken = this.currentToken;
+				const node = this.parseElement();
+				if (node) argNodes.push(node);
+				else if (this.currentToken === preParseToken && this.currentToken.type !== TOKEN_EOF) this.eat(this.currentToken.type);
 			}
-			this.eat(TOKEN_RBRACE);
+			if (this.currentToken.type === TOKEN_RBRACE) this.eat(TOKEN_RBRACE);
+            else throw new Error(`Syntax error: Unclosed required argument for command \\${commandToken.value}. Expected RBRACE, got ${this.currentToken.type}`);
 			requiredArguments.push(new Document(argNodes));
 		}
-
-		return new Command(token.value, optionalArgument, requiredArguments);
+		return new Command(commandToken.value, optionalArgument, requiredArguments);
 	}
 
 	parseEnvironment() {
-		console.log(`[DEBUG][Parser] Starting to parse environment`);
-		// Process environment: \begin{envName} ... \end{envName}
 		this.eat(TOKEN_COMMAND); // Consume 'begin'
-		if (this.currentToken.type !== TOKEN_LBRACE) {
-			throw new Error("Expected { after \\begin");
-		}
+		if (this.currentToken.type !== TOKEN_LBRACE) throw new Error("Expected { after \\begin");
 		this.eat(TOKEN_LBRACE);
 
-		// Parse environment name
 		let envName = "";
-		while (this.currentToken.type !== TOKEN_RBRACE) {
-			console.log(`[DEBUG][Parser] Parsing environment name, current token: ${this.currentToken.toString()}`);
+        // Allow environment names to contain commands (e.g., \textit{foo}) or be simple text, possibly ending with *
+		while (this.currentToken.type === TOKEN_TEXT || this.currentToken.type === TOKEN_COMMAND || (this.currentToken.type === TOKEN_TEXT && this.currentToken.value.endsWith('*'))) {
+            if (this.currentToken.type === TOKEN_COMMAND) envName += "\\";
 			envName += this.currentToken.value;
 			this.eat(this.currentToken.type);
 		}
+		if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected RBRACE for environment name, got ${this.currentToken.type} "${this.currentToken.value}"`);
 		this.eat(TOKEN_RBRACE);
 
-		// For math environments (equation, align, etc.), collect content as raw text
-		const mathEnvs = [
-			"equation",
-			"equation*",
-			"align",
-			"align*",
-			"gather",
-			"gather*",
-			"multline",
-			"multline*",
-			"split",
-			"array",
-		];
-		if (mathEnvs.includes(envName)) {
+        const trimmedEnvName = envName.trim();
+
+		const mathEnvs = ["equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*", "split", "array", "subequations"];
+		if (mathEnvs.includes(trimmedEnvName)) {
 			let mathContent = "";
-			let bracketDepth = 0;
-
+			let braceDepth = 0;
 			while (true) {
-				if (
-					this.currentToken.type === TOKEN_COMMAND &&
-					this.currentToken.value === "end" &&
-					bracketDepth === 0
-				) {
-					break;
+				if (this.currentToken.type === TOKEN_EOF) { console.warn(`[DEBUG][Parser] EOF in math env: ${trimmedEnvName}`); break; }
+				if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end" && braceDepth === 0) {
+					// Lookahead to check if this \end matches the current environment
+                    const currentLexerPos = this.lexer.pos; // Save current lexer position
+                    const lookaheadLexer = new Lexer(this.lexer.text.substring(currentLexerPos)); // Create lookahead from *current* position of main lexer
+                    const lbraceToken = lookaheadLexer.getNextToken(); // Should be '{'
+					if (lbraceToken.type === TOKEN_LBRACE) {
+						let lookaheadEnvName = "";
+                        let namePartToken = lookaheadLexer.getNextToken();
+                        while(namePartToken.type !== TOKEN_RBRACE && namePartToken.type !== TOKEN_EOF) {
+                            if (namePartToken.type === TOKEN_COMMAND) lookaheadEnvName += "\\";
+                            lookaheadEnvName += namePartToken.value;
+                            namePartToken = lookaheadLexer.getNextToken();
+                        }
+						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break; // Match found
+					}
 				}
+				if (this.currentToken.type === TOKEN_LBRACE) braceDepth++;
+				else if (this.currentToken.type === TOKEN_RBRACE) braceDepth--;
 
-				// Keep track of nested braces
-				if (this.currentToken.type === TOKEN_LBRACE) {
-					bracketDepth++;
-				} else if (this.currentToken.type === TOKEN_RBRACE) {
-					bracketDepth--;
-				}
-
-				// Preserve the original token exactly as it appears
-				if (this.currentToken.type === TOKEN_COMMAND) {
-					mathContent += "\\" + this.currentToken.value;
-				} else if (this.currentToken.type === TOKEN_TEXT) {
-					mathContent += this.currentToken.value;
-				} else if (this.currentToken.type === TOKEN_LBRACE) {
-					mathContent += "{";
-				} else if (this.currentToken.type === TOKEN_RBRACE) {
-					mathContent += "}";
-				} else if (this.currentToken.type === TOKEN_LBRACKET) {
-					mathContent += "[";
-				} else if (this.currentToken.type === TOKEN_RBRACKET) {
-					mathContent += "]";
-				}
-
+				mathContent += (this.currentToken.type === TOKEN_COMMAND ? "\\" : "") + this.currentToken.value;
 				this.eat(this.currentToken.type);
 			}
-
-			// Create a single Text node with the math content
 			const children = [new Text(mathContent, true)];
-
-			// Process \end{envName}
-			this.eat(TOKEN_COMMAND); // Consume 'end'
-			this.eat(TOKEN_LBRACE);
-			let endEnvName = "";
-			while (this.currentToken.type !== TOKEN_RBRACE) {
-				endEnvName += this.currentToken.value;
-				this.eat(this.currentToken.type);
+            // Consume the actual \end{envName}
+            if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
+                this.eat(TOKEN_COMMAND); // \end
+                if (this.currentToken.type !== TOKEN_LBRACE) throw new Error(`Expected { after \\end for math environment ${trimmedEnvName}`);
+                this.eat(TOKEN_LBRACE); // {
+                let endEnvName = "";
+                while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
+                    if (this.currentToken.type === TOKEN_COMMAND) endEnvName += "\\";
+                    endEnvName += this.currentToken.value;
+                    this.eat(this.currentToken.type);
+                }
+                if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected } for \\end name in math environment ${trimmedEnvName}`);
+                this.eat(TOKEN_RBRACE); // }
+                if (trimmedEnvName !== endEnvName.trim()) throw new Error(`Math env name mismatch: ${trimmedEnvName} vs ${endEnvName.trim()}`);
+            } else {
+                throw new Error(`Expected \\end for math environment ${trimmedEnvName}, found ${this.currentToken.type}`);
+            }
+			return new Environment(trimmedEnvName, children);
+		} else { // Non-math environments
+			const children = [];
+			while (true) {
+				if (this.currentToken.type === TOKEN_EOF) { console.warn(`[DEBUG][Parser] EOF in non-math env: ${trimmedEnvName}`); break; }
+				if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
+                    const currentLexerPos = this.lexer.pos;
+					const lookaheadLexer = new Lexer(this.lexer.text.substring(currentLexerPos));
+					const lbraceToken = lookaheadLexer.getNextToken();
+					if (lbraceToken.type === TOKEN_LBRACE) {
+						let lookaheadEnvName = "";
+                        let namePartToken = lookaheadLexer.getNextToken();
+                        while(namePartToken.type !== TOKEN_RBRACE && namePartToken.type !== TOKEN_EOF) {
+                            if (namePartToken.type === TOKEN_COMMAND) lookaheadEnvName += "\\";
+                            lookaheadEnvName += namePartToken.value;
+                            namePartToken = lookaheadLexer.getNextToken();
+                        }
+						if (namePartToken.type === TOKEN_RBRACE && lookaheadEnvName.trim() === trimmedEnvName) break; // End of current env
+					}
+				}
+                const preParseToken_envChildren = this.currentToken;
+				const node = this.parseElement();
+				if (node !== null) {
+					children.push(node);
+				} else {
+                    if (this.currentToken === preParseToken_envChildren && this.currentToken.type !== TOKEN_EOF) {
+                        // console.log(`[DEBUG][Parser][Env:${trimmedEnvName}] parseElement for ${preParseToken_envChildren.type} returned null and did not consume. Consuming ${preParseToken_envChildren.toString()}`);
+                        this.eat(preParseToken_envChildren.type);
+                    }
+                }
 			}
-			this.eat(TOKEN_RBRACE);
-
-			if (envName.trim() !== endEnvName.trim()) {
-				throw new Error("Environment name mismatch between \\begin and \\end");
-			}
-
-			return new Environment(envName, children);
+            // Consume the actual \end{envName}
+            if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
+                this.eat(TOKEN_COMMAND); // \end
+                if (this.currentToken.type !== TOKEN_LBRACE) throw new Error(`Expected { after \\end for non-math environment ${trimmedEnvName}`);
+                this.eat(TOKEN_LBRACE); // {
+                let endEnvName = "";
+                while (this.currentToken.type !== TOKEN_RBRACE && this.currentToken.type !== TOKEN_EOF) {
+                     if (this.currentToken.type === TOKEN_COMMAND) endEnvName += "\\";
+                    endEnvName += this.currentToken.value;
+                    this.eat(this.currentToken.type);
+                }
+                if (this.currentToken.type !== TOKEN_RBRACE) throw new Error(`Expected } for \\end name in non-math environment ${trimmedEnvName}`);
+                this.eat(TOKEN_RBRACE); // }
+                if (trimmedEnvName !== endEnvName.trim()) throw new Error(`Non-math env name mismatch: ${trimmedEnvName} vs ${endEnvName.trim()}`);
+            } else if (this.currentToken.type !== TOKEN_EOF) {
+                throw new Error(`Expected \\end for non-math environment ${trimmedEnvName}, found ${this.currentToken.type}`);
+            }
+			return new Environment(trimmedEnvName, children);
 		}
-
-		// For non-math environments, use the original parsing logic
-		const children = [];
-		while (true) {
-			if (this.currentToken.type === TOKEN_COMMAND && this.currentToken.value === "end") {
-				break;
-			}
-			const node = this.parseElement();
-			if (node !== null) {
-				children.push(node);
-			} else if (this.currentToken.type !== TOKEN_EOF) {
-				this.eat(this.currentToken.type);
-			}
-		}
-
-		// Process \end{envName}
-		this.eat(TOKEN_COMMAND); // Consume 'end'
-		this.eat(TOKEN_LBRACE);
-		let endEnvName = "";
-		while (this.currentToken.type !== TOKEN_RBRACE) {
-			endEnvName += this.currentToken.value;
-			this.eat(this.currentToken.type);
-		}
-		this.eat(TOKEN_RBRACE);
-
-		if (envName.trim() !== endEnvName.trim()) {
-			throw new Error("Environment name mismatch between \\begin and \\end");
-		}
-
-		return new Environment(envName, children);
 	}
 }
 
-// --- Test Example ---
-const sampleText =
-	"This is a text segment, containing an inline math formula $a^2 + b^2 = c^2$, " +
-	"and a display math formula $$E = mc^2$$, " +
-	"as well as a command with required argument: \\textbf{bold text}, " +
-	"a command with optional argument: \\command[opt value]{required value}, " +
-	"an escaped dollar sign: \\$, " +
-	"and an environment: \\begin{itemize} " +
-	"  \\item first item " +
-	"  \\item second item " +
-	"\\end{itemize} end.";
-
-const lexer = new Lexer(sampleText);
-const parser = new Parser(lexer);
-const ast = parser.parse();
-console.log("\nFinal AST:");
-console.log(ast.toString());
-
-// --- Export the Parsing Function ---
-
 function parseLatex(text) {
 	const lexer = new Lexer(text);
+    console.log("--- LEXER: All Tokens ---");
+    const allTokens = new Lexer(text).getAllTokens();
+    allTokens.forEach(token => console.log(token.toString()));
+    console.log("--- END LEXER ---");
+
 	const parser = new Parser(lexer);
-	return parser.parse();
+    let ast;
+    try {
+	    ast = parser.parse();
+        console.log("--- PARSER: Final AST ---");
+        console.log(ast.toString());
+        console.log("--- END PARSER ---");
+    } catch (e) {
+        console.error("!!! PARSING ERROR !!!");
+        console.error(e.message);
+        if (parser.currentToken) {
+            console.error("Current token at error:", parser.currentToken.toString());
+            const {line, column} = parser.lexer.getCurrentPositionDetails();
+            console.error(`Error near Line: ${line}, Column: ${column}`);
+            const errorPos = parser.lexer.pos; // Use the main lexer's pos for context
+            const contextChars = 30;
+            const startContext = Math.max(0, errorPos - contextChars);
+            const endContext = Math.min(lexer.text.length, errorPos + contextChars); // Use main lexer's text
+            console.error("Error context:", `...${lexer.text.substring(startContext, errorPos)}[ERROR HERE]${lexer.text.substring(errorPos,endContext)}...`);
+        }
+        throw e;
+    }
+	return ast;
 }
-module.exports = {parseLatex};
-//export { parseLatex };
+module.exports = {parseLatex, Lexer, Parser, Document, Text, Command, Environment, MathNode, Token};
