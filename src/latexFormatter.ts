@@ -42,7 +42,17 @@ function formatNode(node: any, indentLevel: number): string {
 				// The text is already escaped (e.g., \\$, \\%) or is from a math environment, return it directly
 				return node.text || ""; // Ensure text exists
 			} else {
-				return escapeSpecialChars(node.text || ""); // Ensure text exists
+                const textValue = node.text || "";
+                // If the Text node's content is solely a "{" or "}",
+                // and it's not marked as 'escaped', we assume it might be a
+                // grouping brace that the parser treated as literal text.
+                // In this specific scenario, we choose not to escape it further.
+                // This addresses the issue where an argument like {{content}} would have its
+                // outer braces (parsed as Text nodes) escaped.
+                if (textValue === "{" || textValue === "}") {
+                    return textValue;
+                }
+				return escapeSpecialChars(textValue); // For all other text
 			}
 
 		case "Math":
@@ -185,17 +195,19 @@ function escapeSpecialChars(text: string): string {
 	return text
 		.split("\n")
 		.map((line) => {
-			// 判断去除前导空白后是否以 "%" 开头，若是，则认为整行为注释，保持原样返回。
+			// Check if the line, after trimming leading whitespace, starts with "%".
+            // If so, it's a comment line and should be returned as is.
 			if (line.trimStart().startsWith("%")) {
 				return line;
 			}
-			// 查找行中第一个未转义的 "%"，视为注释起始位置。
+			// Find the first unescaped "%" character, which indicates the start of a mid-line comment.
 			const idx = findFirstUnescapedPercent(line);
 			if (idx !== -1) {
-				const before = line.slice(0, idx);
-				const comment = line.slice(idx); // 包含 "%" 及后续内容
-				return escapeNonComment(before) + comment;
+				const before = line.slice(0, idx); // Text before the comment
+				const comment = line.slice(idx); // The comment itself (including "%")
+				return escapeNonComment(before) + comment; // Escape text before, append comment as is
 			} else {
+				// No comment on this line, escape the whole line.
 				return escapeNonComment(line);
 			}
 		})
@@ -203,30 +215,33 @@ function escapeSpecialChars(text: string): string {
 }
 
 /**
- * Helper: 查找一行中第一个未被反斜杠转义的 "%" 的位置
- * @param line 输入行
+ * Helper: Finds the index of the first "%" character in a line that is not preceded by a "\".
+ * @param line The input line string.
+ * @returns The index of the first unescaped "%", or -1 if not found.
  */
 function findFirstUnescapedPercent(line: string): number {
 	for (let i = 0; i < line.length; i++) {
 		if (line[i] === "%") {
-			if (i === 0 || line[i - 1] !== "\\") {
+			if (i === 0 || line[i - 1] !== "\\") { // Check if it's the start or not escaped
 				return i;
 			}
 		}
 	}
-	return -1;
+	return -1; // No unescaped "%" found
 }
 
 /**
- * Helper: 对非注释部分的文本转义特殊字符，不处理 "%"（因为已在上层处理）。
- * @param text 输入文本
+ * Helper: Escapes special LaTeX characters in a text string, assuming it's not a comment.
+ * Characters escaped: # $ & _ ^ { }
+ * Note: This function will still escape underscores `_`. For commands like `\label`
+ * where underscores should be preserved, `formatRawNode` is used, which bypasses this.
+ * @param text The input text (non-comment part).
+ * @returns The text with special characters escaped.
  */
 function escapeNonComment(text: string): string {
-	// 转义除 "%" 和 "~" 外的特殊字符： # $ & _ ^ { }
-    // 注意：这里仍然会转义下划线 `_`。
-    // 对于 \label 等命令，我们通过 formatRawNode 绕过了这个函数。
+	// The regex matches single characters: #, $, &, _, ^, {, }
+    // and prepends a backslash to them.
 	let escaped = text.replace(/([#$&_^{}])/g, "\\$1");
-	// 对 "%" 进行单独转义 (如果它不是行注释的一部分)
-    // escaped = escaped.replace(/%/g, "\\%"); // 这个逻辑在 escapeSpecialChars 中通过 findFirstUnescapedPercent 处理了
+	// Note: '%' is handled by `escapeSpecialChars` by separating comments.
 	return escaped;
 }
